@@ -245,6 +245,17 @@ body{background-image:radial-gradient(circle at 12% 0%,rgba(255,170,190,.32),tra
 #reel.lite .rl-grain,#reel.lite .rl-flick,#reel.lite .rl-scratch{display:none}
 #reel.lite .rl-band::before{animation:none}
 @media (prefers-reduced-motion:reduce){#reel .rl-img,#reel .rl-grain,#reel .rl-flick,#reel .rl-scratch,#reel .rl-band::before,#reel.card .rl-card{animation:none}}
+.cd{margin:6px 0 22px}
+.cd .eyebrow{display:block}
+input:disabled{opacity:.55;cursor:not-allowed}
+#go:disabled{opacity:.6;cursor:not-allowed}
+.cd-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:10px}
+.cd-grid>div{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 4px 10px;text-align:center;box-shadow:var(--shadow)}
+.cd-grid b{display:block;font-family:"Cormorant Garamond",Georgia,serif;font-size:2rem;line-height:1.1;color:var(--accent);font-variant-numeric:tabular-nums}
+.cd-grid small{display:block;margin-top:2px;font-size:.7rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.cd.done .cd-grid{display:none}
+.cd.done .eyebrow{font-size:1rem;letter-spacing:.06em;color:var(--accent)}
+@media (max-width:520px){.cd-grid{gap:8px}.cd-grid b{font-size:1.7rem}}
 </style>
 </head>
 <body>
@@ -267,7 +278,16 @@ body{background-image:radial-gradient(circle at 12% 0%,rgba(255,170,190,.32),tra
   <div class="card">
     <span class="mono" id="mono1" aria-hidden="true"></span>
     <h1 class="serif">A surprise, just for you</h1>
-    <p class="sub">Someone who cares about you made this. Enter your name and passcode to open it.</p>
+    <p class="sub" id="gsub">Someone who cares about you made this. Enter your name and passcode to open it.</p>
+    <div class="cd" id="cd" hidden>
+      <span class="eyebrow" id="cd-label">Counting down to your birthday</span>
+      <div class="cd-grid" id="cd-grid">
+        <div><b id="cd-d">0</b><small>days</small></div>
+        <div><b id="cd-h">00</b><small>hours</small></div>
+        <div><b id="cd-m">00</b><small>minutes</small></div>
+        <div><b id="cd-s">00</b><small>seconds</small></div>
+      </div>
+    </div>
     <label for="who">Name</label>
     <input id="who" type="text" autocomplete="off" autocapitalize="words">
     <label for="pw">Passcode</label>
@@ -463,14 +483,40 @@ $("date").textContent = d.toLocaleDateString(undefined, {weekday:"long", year:"n
 $("time").textContent = d.toLocaleTimeString(undefined, {hour:"numeric", minute:"2-digit"});
 $("place").textContent = PARTY.place;
 $("foot").textContent = "With warm wishes, " + PARTY.from;
-const days = Math.ceil((d - new Date()) / 86400000);
-const c = days > 0 ? days + (days === 1 ? " day to go" : " days to go") : days === 0 ? "Today is the day" : "";
-$("count").textContent = c; $("count").hidden = !c;
+// Countdown + lock: sign-in opens only when PARTY.date arrives. The time is checked against the web
+// server's clock when possible, so changing the phone's clock does not unlock it early.
+let clockOffset = 0, clockChecked = false;
+const nowMs = () => Date.now() + clockOffset;
+const isOpen = () => isNaN(d.getTime()) || (clockChecked && nowMs() >= d.getTime());
+const whenText = d.toLocaleDateString(undefined, {day: "numeric", month: "long"}) + ", " + d.toLocaleTimeString(undefined, {hour: "numeric", minute: "2-digit"});
+function tickCountdown(){
+  const box = $("cd");
+  if (isNaN(d.getTime())) { box.hidden = true; return; }
+  const ms = d.getTime() - nowMs(), open = isOpen(), t = Math.max(0, Math.floor(ms / 1000)), p2 = n => String(n).padStart(2, "0");
+  box.hidden = false;
+  $("cd-d").textContent = Math.floor(t / 86400); $("cd-h").textContent = p2(Math.floor(t % 86400 / 3600));
+  $("cd-m").textContent = p2(Math.floor(t % 3600 / 60)); $("cd-s").textContent = p2(t % 60);
+  box.classList.toggle("done", ms <= 0);
+  $("cd-label").textContent = ms <= 0 ? "It's time, " + PARTY.name + "!" : "Counting down to your birthday";
+  $("who").disabled = $("pw").disabled = $("go").disabled = !open;
+  $("go").textContent = open ? "Sign in" : "Opens " + whenText;
+  $("gsub").textContent = open ? "Someone who cares about you made this. Enter your name and passcode to open it." : "Someone who cares about you made this. It opens when the countdown ends.";
+  const today = ms <= 0 && ms > -86400000;
+  $("count").textContent = today ? "Today is the day" : ""; $("count").hidden = !today;
+}
+fetch(location.href, {method: "HEAD", cache: "no-store"}).then(r => {
+  const h = r.headers.get("date"), age = parseInt(r.headers.get("age") || "0", 10) || 0;
+  if (h) clockOffset = new Date(h).getTime() + age * 1000 - Date.now();
+}).catch(() => {}).finally(() => { clockChecked = true; tickCountdown(); });
+setTimeout(() => { clockChecked = true; tickCountdown(); }, 3000);
+tickCountdown();
+const cdT = setInterval(() => { tickCountdown(); if (clockChecked && d.getTime() - nowMs() <= 0) clearInterval(cdT); }, 1000);
 PARTY.wishes.forEach(w => { const q = document.createElement("blockquote"); q.textContent = w; $("wishes").appendChild(q); });
 
 // Sign in
-function enter(){ $("gate").hidden = true; $("app").hidden = false; window.scrollTo(0, 0); reelLoad(); }
+function enter(){ if (!isOpen()) return; $("gate").hidden = true; $("app").hidden = false; window.scrollTo(0, 0); reelLoad(); }
 function signIn(){
+  if (!isOpen()) return;
   const n = $("who").value.trim().toLowerCase(), p = $("pw").value.trim();
   if (n === PARTY.username.toLowerCase() && p === PARTY.passcode) {
     audio();
